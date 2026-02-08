@@ -216,13 +216,13 @@ def compare_HealthAddresses(json_data, csv_file_path):
     return results, matched_properties
 
 # Function to send property matches via email
-def send_NTMproperty_matches(results_string):
+def send_NTMproperty_matches(results_string, match_count):
     current_date = datetime.now().strftime("%m/%d/%y")
 
     message = Mail(
         from_email=SENDER_EMAIL,
         to_emails=RECIPIENT_EMAIL,
-        subject=f'NTM-1 Property Matches - {current_date}',
+        subject=f'NTM-1 Property Matches ({match_count}) - {current_date}',
         html_content=f'''
             <h2>Matching Properties</h2>
             <p>Here are the matching properties found:</p>
@@ -248,13 +248,13 @@ def send_NTMproperty_matches(results_string):
         logging.error(f'Error sending email: {e}')
 
 
-def send_Health_property_matches(results_string):
+def send_Health_property_matches(results_string, match_count):
     current_date = datetime.now().strftime("%m/%d/%y")
 
     message = Mail(
         from_email=SENDER_EMAIL,
         to_emails=RECIPIENT_EMAILS,
-        subject=f'Medical Office Property Matches - {current_date}',
+        subject=f'Medical Office Property Matches ({match_count}) - {current_date}',
         html_content=f'''
             <h2>Matching Properties</h2>
             <p>Here are the matching properties found:</p>
@@ -424,7 +424,7 @@ def main():
 
         NTMresults_string, NTMmatched_properties = compare_NTMaddresses(zillow_data, 'NTMaddresses.csv')
         if NTMmatched_properties:
-            send_NTMproperty_matches(NTMresults_string)
+            send_NTMproperty_matches(NTMresults_string, len(NTMmatched_properties))
             update_NTMairtable(NTMmatched_properties)
         else:
             logging.info('No NTM matches today')
@@ -433,7 +433,7 @@ def main():
 
         med_results_string, med_matched_properties = compare_HealthAddresses(zillow_data, 'HealthOfficeAddresses.csv')
         if med_matched_properties:
-            send_Health_property_matches(med_results_string)
+            send_Health_property_matches(med_results_string, len(med_matched_properties))
         else:
             logging.info('No Health matches today')
 
