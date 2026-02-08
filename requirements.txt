@@ -1,0 +1,6 @@
+requests
+pandas
+sendgrid
+airtable-python-wrapper
+python-dotenv
+arcgis
