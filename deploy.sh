@@ -66,15 +66,17 @@ echo "[6/7] Setting permissions..."
 chown -R $USER:$USER "$APP_DIR"
 chmod 600 "$APP_DIR/.env"
 
-# 7. Set up cron jobs (8am + 5pm ET)
+# 7. Set up cron job (8am ET daily)
 echo "[7/7] Setting up cron schedule..."
 CRON_FILE="/etc/cron.d/stpete-monitor"
 cat > "$CRON_FILE" << 'CRON'
-# St Pete Property Monitor - runs twice daily (ET = UTC-5)
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+MAILTO=root
+
+# St Pete Property Monitor - runs daily (ET = UTC-5)
 # 8:00 AM ET = 13:00 UTC
-# 5:00 PM ET = 22:00 UTC
 0 13 * * * monitor cd /opt/stpete-monitor && /opt/stpete-monitor/venv/bin/python /opt/stpete-monitor/main.py >> /opt/stpete-monitor/cron.log 2>&1
-0 22 * * * monitor cd /opt/stpete-monitor && /opt/stpete-monitor/venv/bin/python /opt/stpete-monitor/main.py >> /opt/stpete-monitor/cron.log 2>&1
 CRON
 chmod 644 "$CRON_FILE"
 
@@ -83,7 +85,7 @@ echo "=== Deployment complete ==="
 echo ""
 echo "  App directory:  $APP_DIR"
 echo "  Python venv:    $APP_DIR/venv"
-echo "  Cron schedule:  8:00 AM + 5:00 PM ET daily"
+echo "  Cron schedule:  8:00 AM ET daily"
 echo "  Cron log:       $APP_DIR/cron.log"
 echo "  App log:        $APP_DIR/property_matches.log"
 echo ""
