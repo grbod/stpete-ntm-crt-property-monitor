@@ -12,6 +12,8 @@ import os
 import traceback
 from dotenv import load_dotenv
 
+from address_match import AddressIndex
+
 load_dotenv()
 
 # Load credentials from environment
@@ -72,11 +74,16 @@ def get_property_data():
                     raise RuntimeError(f'Failed to fetch page {page_num} after 3 attempts: {e}')
 
     data = fetch_page(1)
+    # An error/quota body returns HTTP 200 without 'props'; do not treat that as "no listings".
+    if 'props' not in data:
+        raise RuntimeError(f"Zillow response has no 'props' key: {str(data)[:300]}")
     total_pages = data.get('totalPages', 1)
 
     all_properties = data.get('props', [])
     for page in range(2, total_pages + 1):
         page_data = fetch_page(page)
+        if 'props' not in page_data:
+            raise RuntimeError(f"Zillow page {page} has no 'props' key: {str(page_data)[:300]}")
         all_properties.extend(page_data.get('props', []))
 
     # Save the JSON data with today's date
@@ -101,14 +108,14 @@ def compare_NTMaddresses(json_data, csv_file_path):
     ]
 
     csv_addresses_df = pd.read_csv(csv_file_path)
-    csv_addresses_df['Address'] = csv_addresses_df['Address'].str.lower()
+    ntm_index = AddressIndex((a, None) for a in csv_addresses_df['Address'])
 
     results = ""
     match_count = 0
     matched_properties = []
 
     for property in json_addresses:
-        if any(csv_address in property['address'] for csv_address in csv_addresses_df['Address']):
+        if ntm_index.lookup(property['address']):
             address_encoded = urllib.parse.quote(property['address'])
             ntm_map_url = f"https://egis.stpete.org/portal/apps/webappviewer/index.html?id=76797e9d8d8b4d20982cb1a2c77acd11&find={address_encoded}"
             zoning_map_url = f"https://egis.stpete.org/portal/apps/webappviewer/index.html?id=f0ff270cad0940a2879b38e955319dfa&find={address_encoded}"
@@ -171,10 +178,7 @@ def compare_HealthAddresses(json_data, csv_file_path):
 
     # Load and normalize CSV addresses and zones
     csv_addresses_df = pd.read_csv(csv_file_path)
-    csv_addresses_df['Address'] = csv_addresses_df['Address'].str.lower()
-
-    # Extract core addresses from CSV
-    csv_addresses_df['Core_Address'] = csv_addresses_df['Address'].apply(lambda x: " ".join(x.split()[:3]))
+    health_index = AddressIndex(zip(csv_addresses_df['Address'], csv_addresses_df['Zone_Class']))
 
     # Initialize results and matched properties
     results = ""
@@ -192,9 +196,10 @@ def compare_HealthAddresses(json_data, csv_file_path):
 
     # Match JSON addresses against CSV addresses
     for property in json_addresses:
-        match = csv_addresses_df[(csv_addresses_df['Core_Address'] == property['core_address']) & (~csv_addresses_df['Zone_Class'].isin(exclusion_zones))]
-        if not match.empty:
-            zone_class = match['Zone_Class'].values[0]
+        # Match the full address (number, street, direction), then apply the zone exclusion per row.
+        allowed_zones = sorted({z for z, _ in health_index.lookup(property['address']) if z not in exclusion_zones})
+        if allowed_zones:
+            zone_class = "/".join(allowed_zones)
             zoning_map_url = generate_zoning_map_url(property['address'])
 
             formatted_address = capitalize_address(property['address'])
@@ -418,9 +423,29 @@ def update_NTMairtable(properties):
             logging.error(f'Error inserting {address}: {e}')
 
 
+COVERAGE_MIN = 0.20      # normal is ~65%; a format change dropped it to ~1% in simulation
+COVERAGE_MIN_LISTINGS = 10
+
+
+def check_street_coverage(listings):
+    """Share of listings whose street name appears in either CSV. Raises if it collapses,
+    which is what a Zillow address-format change looks like."""
+    ntm = AddressIndex((a, None) for a in pd.read_csv('NTMaddresses.csv')['Address'])
+    health_df = pd.read_csv('HealthOfficeAddresses.csv')
+    health = AddressIndex(zip(health_df['Address'], health_df['Zone_Class']))
+    known = sum(1 for e in listings if ntm.street_known(e.get('address', '')) or health.street_known(e.get('address', '')))
+    share = known / len(listings) if listings else 0
+    logging.info(f'Street coverage: {known}/{len(listings)} = {share:.0%}')
+    if len(listings) >= COVERAGE_MIN_LISTINGS and share < COVERAGE_MIN:
+        sample = [e.get('address', '') for e in listings[:3]]
+        raise RuntimeError(f'Street coverage collapsed to {share:.0%} ({known}/{len(listings)}). '
+                           f'Zillow address format may have changed. Sample: {sample}')
+
+
 def main():
     try:
         zillow_data = get_property_data()
+        check_street_coverage(zillow_data)
 
         NTMresults_string, NTMmatched_properties = compare_NTMaddresses(zillow_data, 'NTMaddresses.csv')
         if NTMmatched_properties:
